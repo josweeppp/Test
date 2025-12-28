@@ -1,0 +1,2 @@
+localStorage.setItem("sessionId", "yes");
+localStorage.setItem("isAdmin", "true");
