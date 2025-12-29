@@ -2,9 +2,9 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
 
-    // =========================
+    // ======================
     // ADMIN LOGIN
-    // =========================
+    // ======================
     if (url.pathname === "/api/admin/login" && request.method === "POST") {
       const { email, password } = await request.json();
 
@@ -17,7 +17,13 @@ export default {
           {
             headers: {
               "Content-Type": "application/json",
-              "Set-Cookie": `admin_session=${env.ADMIN_SESSION_SECRET}; Path=/; HttpOnly; Secure; SameSite=Strict`
+              "Set-Cookie": [
+                `admin_session=${env.ADMIN_SESSION_SECRET}`,
+                "Path=/",
+                "HttpOnly",
+                "Secure",
+                "SameSite=Strict"
+              ].join("; ")
             }
           }
         );
@@ -26,20 +32,23 @@ export default {
       return new Response("Unauthorized", { status: 401 });
     }
 
-    // =========================
-    // PROTECT ALL /admin/*
-    // =========================
+    // ======================
+    // PROTECT /admin/*
+    // ======================
     if (url.pathname.startsWith("/admin")) {
-      const cookie = request.headers.get("Cookie") || "";
+      const cookieHeader = request.headers.get("Cookie") || "";
+      const cookies = Object.fromEntries(
+        cookieHeader.split("; ").map(c => c.split("="))
+      );
 
-      if (!cookie.includes(`admin_session=${env.ADMIN_SESSION_SECRET}`)) {
+      if (cookies.admin_session !== env.ADMIN_SESSION_SECRET) {
         return Response.redirect(`${url.origin}/login.html`, 302);
       }
     }
 
-    // =========================
-    // PASS THROUGH TO PAGES
-    // =========================
+    // ======================
+    // PASS TO PAGES
+    // ======================
     return fetch(request);
   }
 };
