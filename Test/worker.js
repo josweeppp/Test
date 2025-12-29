@@ -37,7 +37,7 @@ export default {
     // =====================
     if (url.pathname.startsWith("/admin")) {
 
-      // ✅ Allow login page without auth
+      // ✅ Allow login page
       if (url.pathname === "/admin/login.html") {
         return fetch(request);
       }
