@@ -2,9 +2,9 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
 
-    /* =========================
-       MAGIC LINK REQUEST
-    ========================= */
+    // ===============================
+    // MAGIC LINK REQUEST
+    // ===============================
     if (url.pathname === "/api/auth/request" && request.method === "POST") {
       const { email } = await request.json();
 
@@ -13,7 +13,7 @@ export default {
       }
 
       const token = crypto.randomUUID();
-      const expires = Date.now() + 15 * 60 * 1000;
+      const expires = Date.now() + 15 * 60 * 1000; // 15 min
 
       await env.USER_MAGIC_TOKENS.put(
         token,
@@ -23,6 +23,7 @@ export default {
 
       const link = `${url.origin}/api/auth/verify?token=${token}`;
 
+      // TEMP: log link (later you email it)
       console.log("MAGIC LOGIN LINK:", link);
 
       return new Response(
@@ -31,9 +32,9 @@ export default {
       );
     }
 
-    /* =========================
-       MAGIC LINK VERIFY
-    ========================= */
+    // ===============================
+    // MAGIC LINK VERIFY
+    // ===============================
     if (url.pathname === "/api/auth/verify") {
       const token = url.searchParams.get("token");
       if (!token) return new Response("Invalid token", { status: 400 });
@@ -43,15 +44,13 @@ export default {
 
       await env.USER_MAGIC_TOKENS.delete(token);
 
-      return Response.redirect(
-        `${url.origin}/`,
-        302,
-        {
-          headers: {
-            "Set-Cookie": `user_session=1; Path=/; HttpOnly; Secure; SameSite=Lax`
-          }
+      return new Response(null, {
+        status: 302,
+        headers: {
+          "Location": "/",
+          "Set-Cookie": "user_session=1; Path=/; HttpOnly; Secure; SameSite=Lax"
         }
-      );
+      });
     }
 
     return new Response("Not found", { status: 404 });
