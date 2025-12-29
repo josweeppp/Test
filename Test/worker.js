@@ -2,9 +2,9 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
 
-    // ===============================
-    // REQUEST MAGIC LINK
-    // ===============================
+    /* =========================
+       MAGIC LINK REQUEST
+    ========================= */
     if (url.pathname === "/api/auth/request" && request.method === "POST") {
       const { email } = await request.json();
 
@@ -13,15 +13,16 @@ export default {
       }
 
       const token = crypto.randomUUID();
+      const expires = Date.now() + 15 * 60 * 1000;
 
-      // Store token → email (15 min)
-      await env.USER_MAGIC_TOKENS.put(token, email, {
-        expirationTtl: 900,
-      });
+      await env.USER_MAGIC_TOKENS.put(
+        token,
+        JSON.stringify({ email, expires }),
+        { expirationTtl: 900 }
+      );
 
       const link = `${url.origin}/api/auth/verify?token=${token}`;
 
-      // TEMP: log instead of email (for testing)
       console.log("MAGIC LOGIN LINK:", link);
 
       return new Response(
@@ -30,32 +31,29 @@ export default {
       );
     }
 
-    // ===============================
-    // VERIFY MAGIC LINK
-    // ===============================
+    /* =========================
+       MAGIC LINK VERIFY
+    ========================= */
     if (url.pathname === "/api/auth/verify") {
       const token = url.searchParams.get("token");
-      if (!token) {
-        return new Response("Invalid token", { status: 400 });
-      }
+      if (!token) return new Response("Invalid token", { status: 400 });
 
-      const email = await env.USER_MAGIC_TOKENS.get(token);
-      if (!email) {
-        return new Response("Token expired", { status: 401 });
-      }
+      const data = await env.USER_MAGIC_TOKENS.get(token);
+      if (!data) return new Response("Expired or invalid", { status: 401 });
 
-      // One-time use
       await env.USER_MAGIC_TOKENS.delete(token);
 
-      return new Response(null, {
-        status: 302,
-        headers: {
-          "Set-Cookie": `user_session=${email}; Path=/; HttpOnly; Secure; SameSite=Lax`,
-          "Location": "/",
-        },
-      });
+      return Response.redirect(
+        `${url.origin}/`,
+        302,
+        {
+          headers: {
+            "Set-Cookie": `user_session=1; Path=/; HttpOnly; Secure; SameSite=Lax`
+          }
+        }
+      );
     }
 
     return new Response("Not found", { status: 404 });
-  },
+  }
 };
