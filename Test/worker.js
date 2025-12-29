@@ -1,190 +1,98 @@
-addEventListener("fetch", event => {
-  event.respondWith(handleRequest(event.request))
-})
+export default {
+  async fetch(request, env, ctx) {
+    const url = new URL(request.url);
+    const path = url.pathname;
 
-async function handleRequest(request) {
-  const url = new URL(request.url)
+    // =========================
+    // CONFIG (CHANGE THESE)
+    // =========================
+    const ADMIN_EMAIL = env.ADMIN_EMAIL;
+    const ADMIN_PASSWORD = env.ADMIN_PASSWORD;
+    const COOKIE_NAME = "admin_session";
 
-  // ---- CORS ----
-  if (request.method === "OPTIONS") {
-    return new Response(null, { headers: corsHeaders() })
-  }
+    // =========================
+    // HELPERS
+    // =========================
+    const json = (data, status = 200) =>
+      new Response(JSON.stringify(data), {
+        status,
+        headers: { "Content-Type": "application/json" },
+      });
 
-  // ======================
-  // AUTH (USER)
-  // ======================
-  if (url.pathname === "/api/login" && request.method === "POST") {
-    const { email } = await request.json()
-    if (!email) return json({ error: "Email required" }, 400)
+    const redirect = (to) =>
+      new Response(null, {
+        status: 302,
+        headers: { Location: to },
+      });
 
-    const sid = crypto.randomUUID()
-    await SESSIONS.put(sid, email)
+    const getCookie = (req, name) => {
+      const cookie = req.headers.get("Cookie");
+      if (!cookie) return null;
+      const match = cookie.match(new RegExp(`${name}=([^;]+)`));
+      return match ? match[1] : null;
+    };
 
-    return new Response(JSON.stringify({ success: true }), {
-      headers: {
-        ...corsHeaders(),
-        "Set-Cookie": `session=${sid}; Path=/; HttpOnly; Secure; SameSite=Strict`
+    const isAuthed = () =>
+      getCookie(request, COOKIE_NAME) === "true";
+
+    // =========================
+    // ADMIN LOGIN
+    // =========================
+    if (path === "/api/admin/login" && request.method === "POST") {
+      const form = await request.formData();
+      const email = form.get("email");
+      const password = form.get("password");
+
+      if (email === ADMIN_EMAIL && password === ADMIN_PASSWORD) {
+        return new Response(null, {
+          status: 302,
+          headers: {
+            "Set-Cookie":
+              `${COOKIE_NAME}=true; HttpOnly; Secure; SameSite=Strict; Path=/`,
+            Location: "/admin/index.html",
+          },
+        });
       }
-    })
-  }
 
-  // ======================
-  // AUTH (ADMIN)
-  // ======================
-  if (url.pathname === "/api/admin/login" && request.method === "POST") {
-    const { email, secret } = await request.json()
-
-    if (email !== ADMIN_EMAIL || secret !== ADMIN_SECRET) {
-      return json({ error: "Forbidden" }, 403)
+      return redirect("/admin/login.html?error=1");
     }
 
-    return new Response(JSON.stringify({ success: true }), {
-      headers: {
-        ...corsHeaders(),
-        "Set-Cookie":
-          "admin_session=valid; Path=/; HttpOnly; Secure; SameSite=Strict"
+    // =========================
+    // ADMIN VERIFY (JS GUARD)
+    // =========================
+    if (path === "/api/admin/verify") {
+      if (!isAuthed()) {
+        return new Response("Unauthorized", { status: 401 });
       }
-    })
-  }
-
-  // ======================
-  // PRODUCTS (PUBLIC)
-  // ======================
-  if (url.pathname === "/api/products" && request.method === "GET") {
-    const products = (await PURCHASES.get("products", { type: "json" })) || []
-    return json(products)
-  }
-
-  // ======================
-  // PURCHASE
-  // ======================
-  if (url.pathname === "/api/purchase" && request.method === "POST") {
-    const email = await requireUser(request)
-    const { product } = await request.json()
-
-    const key = `stock:${product}`
-    const stock = (await STOCK.get(key, { type: "json" })) || []
-
-    if (stock.length === 0) {
-      return json({ error: "Out of stock" }, 400)
+      return new Response("OK");
     }
 
-    const account = stock.shift()
-    await STOCK.put(key, JSON.stringify(stock))
-
-    const purchasesKey = `purchases:${email}`
-    const purchases =
-      (await PURCHASES.get(purchasesKey, { type: "json" })) || []
-
-    purchases.push({
-      product,
-      account,
-      date: Date.now()
-    })
-
-    await PURCHASES.put(purchasesKey, JSON.stringify(purchases))
-
-    return json({ success: true, account })
-  }
-
-  // ======================
-  // ADMIN: ADD STOCK
-  // ======================
-  if (url.pathname === "/api/admin/stock" && request.method === "POST") {
-    requireAdmin(request)
-
-    const { product, accounts } = await request.json()
-    if (!product || !Array.isArray(accounts)) {
-      return json({ error: "Invalid payload" }, 400)
+    // =========================
+    // ADMIN LOGOUT
+    // =========================
+    if (path === "/api/admin/logout") {
+      return new Response(null, {
+        status: 302,
+        headers: {
+          "Set-Cookie":
+            `${COOKIE_NAME}=; Max-Age=0; Path=/; HttpOnly; Secure; SameSite=Strict`,
+          Location: "/admin/login.html",
+        },
+      });
     }
 
-    const key = `stock:${product}`
-    const existing = (await STOCK.get(key, { type: "json" })) || []
-    const updated = existing.concat(accounts)
-
-    await STOCK.put(key, JSON.stringify(updated))
-
-    return json({ success: true, total: updated.length })
-  }
-
-  // ======================
-  // ADMIN: PRODUCTS
-  // ======================
-  if (url.pathname === "/api/admin/products" && request.method === "POST") {
-    requireAdmin(request)
-    const products = await request.json()
-    await PURCHASES.put("products", JSON.stringify(products))
-    return json({ success: true })
-  }
-
-  // ======================
-  // ADMIN: ADS
-  // ======================
-  if (url.pathname === "/api/admin/ads" && request.method === "POST") {
-    requireAdmin(request)
-    const ads = await request.json()
-    await PURCHASES.put("ads", JSON.stringify(ads))
-    return json({ success: true })
-  }
-
-  if (url.pathname === "/api/ads" && request.method === "GET") {
-    const ads = (await PURCHASES.get("ads", { type: "json" })) || {}
-    return json(ads)
-  }
-
-  // ======================
-  // ADMIN: SETTINGS
-  // ======================
-  if (url.pathname === "/api/admin/settings" && request.method === "POST") {
-    requireAdmin(request)
-    const settings = await request.json()
-    await PURCHASES.put("settings", JSON.stringify(settings))
-    return json({ success: true })
-  }
-
-  if (url.pathname === "/api/settings" && request.method === "GET") {
-    const settings =
-      (await PURCHASES.get("settings", { type: "json" })) || {}
-    return json(settings)
-  }
-
-  return json({ error: "Not found" }, 404)
-}
-
-// ======================
-// HELPERS
-// ======================
-function requireAdmin(request) {
-  const cookie = request.headers.get("Cookie") || ""
-  if (!cookie.includes("admin_session=valid")) {
-    throw new Response("Forbidden", { status: 403 })
-  }
-}
-
-async function requireUser(request) {
-  const cookie = request.headers.get("Cookie") || ""
-  const match = cookie.match(/session=([^;]+)/)
-  if (!match) throw new Response("Unauthorized", { status: 401 })
-
-  const email = await SESSIONS.get(match[1])
-  if (!email) throw new Response("Unauthorized", { status: 401 })
-  return email
-}
-
-function json(data, status = 200) {
-  return new Response(JSON.stringify(data), {
-    status,
-    headers: {
-      "Content-Type": "application/json",
-      ...corsHeaders()
+    // =========================
+    // PROTECT ADMIN PAGES
+    // =========================
+    if (path.startsWith("/admin") && path !== "/admin/login.html") {
+      if (!isAuthed()) {
+        return redirect("/admin/login.html");
+      }
     }
-  })
-}
 
-function corsHeaders() {
-  return {
-    "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type"
-  }
-}
+    // =========================
+    // DEFAULT (STATIC ASSETS)
+    // =========================
+    return env.ASSETS.fetch(request);
+  },
+};
