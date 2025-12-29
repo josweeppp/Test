@@ -2,87 +2,62 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
 
-    /* ===============================
-       REQUEST MAGIC LINK
-    =============================== */
+    // ===== REQUEST LOGIN =====
     if (url.pathname === "/api/auth/request" && request.method === "POST") {
       const { email } = await request.json();
-
       if (!email) {
         return new Response("Email required", { status: 400 });
       }
 
       const token = crypto.randomUUID();
-      const expires = Date.now() + 15 * 60 * 1000; // 15 min
+      await env.USER_MAGIC_TOKENS.put(token, email, { expirationTtl: 900 });
 
-      await env.USER_MAGIC_TOKENS.put(
-        token,
-        JSON.stringify({ email, expires }),
-        { expirationTtl: 900 }
-      );
+      const link = `${url.origin}/api/auth/verify?token=${token}`;
 
-      const link = `https://seoclub.pages.dev/api/auth/verify?token=${token}`;
-
-      /* ---- SEND EMAIL ---- */
-      const emailRes = await fetch("https://api.resend.com/emails", {
+      await fetch("https://api.resend.com/emails", {
         method: "POST",
         headers: {
           "Authorization": `Bearer ${env.RESEND_API_KEY}`,
           "Content-Type": "application/json"
         },
         body: JSON.stringify({
-          from: "SeoClub <login@seoclub.pages.dev>",
+          from: "SeoClub <onboarding@resend.dev>",
           to: email,
           subject: "Your SeoClub login link",
-          html: `
-            <p>Click the link below to log in:</p>
-            <p><a href="${link}">${link}</a></p>
-            <p>This link expires in 15 minutes.</p>
-          `
+          html: `<p>Click to login:</p><p><a href="${link}">${link}</a></p>`
         })
       });
 
-      if (!emailRes.ok) {
-        return new Response("Failed to send email", { status: 500 });
-      }
-
-      return new Response(
-        JSON.stringify({ success: true }),
-        { headers: { "Content-Type": "application/json" } }
-      );
+      return Response.json({ success: true });
     }
 
-    /* ===============================
-       VERIFY MAGIC LINK
-    =============================== */
+    // ===== VERIFY LOGIN =====
     if (url.pathname === "/api/auth/verify") {
       const token = url.searchParams.get("token");
-      if (!token) {
-        return new Response("Invalid token", { status: 400 });
-      }
+      if (!token) return new Response("Invalid token", { status: 400 });
 
-      const data = await env.USER_MAGIC_TOKENS.get(token);
-      if (!data) {
-        return new Response("Expired or invalid token", { status: 401 });
-      }
+      const email = await env.USER_MAGIC_TOKENS.get(token);
+      if (!email) return new Response("Expired token", { status: 401 });
 
       await env.USER_MAGIC_TOKENS.delete(token);
 
-      return new Response(null, {
-        status: 302,
-        headers: {
-          "Location": "/",
-          "Set-Cookie": [
-            "user_session=1",
-            "Path=/",
-            "Domain=seoclub.pages.dev",
-            "HttpOnly",
-            "Secure",
-            "SameSite=Lax",
-            "Max-Age=86400"
-          ].join("; ")
-        }
-      });
+      const headers = new Headers();
+      headers.append(
+        "Set-Cookie",
+        `session=${email}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=2592000`
+      );
+      headers.append("Location", "/");
+
+      return new Response(null, { status: 302, headers });
+    }
+
+    // ===== CHECK SESSION =====
+    if (url.pathname === "/api/auth/me") {
+      const cookie = request.headers.get("Cookie") || "";
+      const match = cookie.match(/session=([^;]+)/);
+      if (!match) return Response.json({ loggedIn: false });
+
+      return Response.json({ loggedIn: true, email: match[1] });
     }
 
     return new Response("Not found", { status: 404 });
