@@ -2,9 +2,14 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
 
-    // =====================
-    // ADMIN LOGIN API
-    // =====================
+    // Only allow API routes
+    if (!url.pathname.startsWith("/api/")) {
+      return new Response("Not Found", { status: 404 });
+    }
+
+    // =========================
+    // ADMIN LOGIN
+    // =========================
     if (url.pathname === "/api/admin/login" && request.method === "POST") {
       const { email, password } = await request.json();
 
@@ -17,47 +22,31 @@ export default {
           {
             headers: {
               "Content-Type": "application/json",
-              "Set-Cookie": [
-                `admin_session=${env.ADMIN_SESSION_SECRET}`,
-                "Path=/admin",
-                "HttpOnly",
-                "Secure",
-                "SameSite=Strict"
-              ].join("; ")
+              "Set-Cookie": `admin_session=${env.ADMIN_SESSION_SECRET}; Path=/; HttpOnly; Secure; SameSite=Strict`
             }
           }
         );
       }
 
+      return new Response(
+        JSON.stringify({ success: false }),
+        { status: 401 }
+      );
+    }
+
+    // =========================
+    // ADMIN VERIFY
+    // =========================
+    if (url.pathname === "/api/admin/verify") {
+      const cookie = request.headers.get("Cookie") || "";
+
+      if (cookie.includes(`admin_session=${env.ADMIN_SESSION_SECRET}`)) {
+        return new Response("OK", { status: 200 });
+      }
+
       return new Response("Unauthorized", { status: 401 });
     }
 
-    // =====================
-    // PROTECT /admin/*
-    // =====================
-    if (url.pathname.startsWith("/admin")) {
-
-      // ✅ Allow login page
-      if (url.pathname === "/admin/login.html") {
-        return fetch(request);
-      }
-
-      const cookieHeader = request.headers.get("Cookie") || "";
-      const cookies = Object.fromEntries(
-        cookieHeader.split("; ").map(c => c.split("="))
-      );
-
-      if (cookies.admin_session !== env.ADMIN_SESSION_SECRET) {
-        return Response.redirect(
-          `${url.origin}/admin/login.html`,
-          302
-        );
-      }
-    }
-
-    // =====================
-    // PASS THROUGH
-    // =====================
-    return fetch(request);
+    return new Response("Not Found", { status: 404 });
   }
 };
